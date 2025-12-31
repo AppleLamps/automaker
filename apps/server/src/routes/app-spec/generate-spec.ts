@@ -22,6 +22,47 @@ import { getAutoLoadClaudeMdSetting } from '../../lib/settings-helpers.js';
 
 const logger = createLogger('SpecRegeneration');
 
+/**
+ * Load existing spec content for context-aware updates
+ */
+async function loadExistingSpec(projectPath: string): Promise<string | null> {
+  try {
+    const specPath = getAppSpecPath(projectPath);
+    const content = (await secureFs.readFile(specPath, 'utf-8')) as string;
+    if (content && content.trim().length > 0) {
+      logger.info(`Loaded existing spec (${content.length} chars)`);
+      return content;
+    }
+  } catch {
+    // No existing spec - that's fine
+    logger.debug('No existing spec found');
+  }
+  return null;
+}
+
+/**
+ * Create a timestamped backup of the existing spec
+ */
+async function backupExistingSpec(projectPath: string): Promise<string | null> {
+  try {
+    const specPath = getAppSpecPath(projectPath);
+    const content = (await secureFs.readFile(specPath, 'utf-8')) as string;
+    if (content && content.trim().length > 0) {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const backupPath = path.join(
+        path.dirname(specPath),
+        `app_spec.${timestamp}.backup.txt`
+      );
+      await secureFs.writeFile(backupPath, content);
+      logger.info(`Created backup at: ${backupPath}`);
+      return backupPath;
+    }
+  } catch (error) {
+    logger.warn('Could not create backup:', error);
+  }
+  return null;
+}
+
 export async function generateSpec(
   projectPath: string,
   projectOverview: string,
@@ -39,6 +80,19 @@ export async function generateSpec(
   logger.info('generateFeatures:', generateFeatures);
   logger.info('analyzeProject:', analyzeProject);
   logger.info('maxFeatures:', maxFeatures);
+
+  // Load existing spec for context-aware updates
+  const existingSpec = await loadExistingSpec(projectPath);
+  if (existingSpec) {
+    // Create backup before overwriting
+    const backupPath = await backupExistingSpec(projectPath);
+    if (backupPath) {
+      events.emit('spec-regeneration:event', {
+        type: 'spec_progress',
+        content: `Backed up existing spec to ${path.basename(backupPath)}\n`,
+      });
+    }
+  }
 
   // Build the prompt based on whether we should analyze the project
   let analysisInstructions = '';
@@ -63,10 +117,28 @@ export async function generateSpec(
 Use these technologies as the foundation for the specification.`;
   }
 
-  const prompt = `You are helping to define a software project specification.
+  // Build context-aware prompt with existing spec if available
+  let existingSpecContext = '';
+  if (existingSpec) {
+    existingSpecContext = `
+EXISTING SPECIFICATION:
+The project already has a specification. You MUST preserve accurate information from it.
+Only update sections that need changes based on your analysis. Do not remove valid information.
+
+${existingSpec}
+
+PRESERVATION RULES:
+- Keep all implemented_features that still exist in the codebase
+- Preserve development_guidelines unless they conflict with current patterns
+- Update technology_stack only if you find new technologies or deprecated ones
+- Merge new findings with existing content, don't replace wholesale
+`;
+  }
+
+  const prompt = `You are helping to ${existingSpec ? 'update' : 'define'} a software project specification.
 
 IMPORTANT: Never ask for clarification or additional information. Use the information provided and make reasonable assumptions to create the best possible specification. If details are missing, infer them based on common patterns and best practices.
-
+${existingSpecContext}
 Project Overview:
 ${projectOverview}
 

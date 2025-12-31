@@ -108,7 +108,7 @@ The UI (`apps/ui/src/`) uses:
 │       └── images/
 ├── context/               # Context files for AI agents (CLAUDE.md, etc.)
 ├── settings.json          # Project-specific settings
-├── spec.md               # Project specification
+├── app_spec.txt          # Project specification (XML format)
 └── analysis.json         # Project structure analysis
 ```
 
