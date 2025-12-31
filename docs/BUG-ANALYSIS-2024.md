@@ -340,12 +340,13 @@ if (process.env.NODE_ENV === 'development') {
 
 | Issue | Status | Next Steps |
 |-------|--------|------------|
-| #315 Cryptic errors | Ready to implement | Apply diff to http-api-client.ts |
-| #235 RAM leaks | Ready to implement | Apply 3 fixes to validation + modal |
+| #315 Cryptic errors | **FIXED** | `http-api-client.ts:handleResponse()` |
+| #235 RAM leaks | **FIXED** | 3 fixes: validation interval, limit, buffer |
 | #316 MCP race | Blocked | MCP not implemented; pattern provided |
-| Agent modal | Ready to implement | Replace window global with Zustand |
-| WebSocket | Ready to implement | Add max retry limit |
+| Agent modal | **FIXED** | Replaced window global with Zustand |
+| WebSocket | **FIXED** | Added max retry limit (10 attempts) |
 | Commit scope | Design review | Consider if behavior change needed |
 | Settings toggle | Defensive fix | Add try-catch wrapper |
 
+**Fixes Applied:** 6 of 9 issues resolved
 **Total Estimated Effort:** ~20 hours for all fixes
