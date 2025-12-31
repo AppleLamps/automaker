@@ -1,0 +1,47 @@
+dependencies:
+  libs/types:
+    depends_on: []
+  libs/platform:
+    depends_on:
+      - libs/types
+  libs/utils:
+    depends_on:
+      - libs/types
+      - libs/platform
+  libs/git-utils:
+    depends_on:
+      - libs/types
+      - libs/utils
+  libs/prompts:
+    depends_on:
+      - libs/types
+  libs/model-resolver:
+    depends_on:
+      - libs/types
+  libs/dependency-resolver:
+    depends_on:
+      - libs/types
+  apps/server:
+    depends_on:
+      - libs/types
+      - libs/platform
+      - libs/utils
+      - libs/prompts
+      - libs/model-resolver
+      - libs/dependency-resolver
+      - libs/git-utils
+  apps/ui:
+    depends_on:
+      - libs/types
+      - libs/dependency-resolver
+rules:
+  allow:
+    - apps/* may depend on libs/*
+    - libs/utils may depend on libs/platform
+    - libs/git-utils may depend on libs/utils
+  forbid:
+    - libs/* must not depend on apps/*
+    - apps/ui must not import apps/server directly (use HTTP/WS)
+    - libs/types must remain a leaf package
+notes:
+  - Scripts, docs, and tests are out of the runtime dependency graph

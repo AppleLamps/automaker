@@ -1,0 +1,34 @@
+terms:
+  feature:
+    meaning: A unit of work stored under {project}/.automaker/features/{featureId}/feature.json.
+    avoid: Do not confuse with a git branch or a UI card only.
+  auto-mode:
+    meaning: Automated feature execution flow that runs an agent to implement work.
+    avoid: Not the same as manual agent chat sessions.
+  backlog plan:
+    meaning: Generated plan for multiple features/tasks, managed by backlog-plan routes.
+    avoid: Not the same as a single feature plan approval.
+  pipeline:
+    meaning: Configurable sequence of steps used in feature or validation workflows.
+    avoid: Not a CI pipeline; it is an in-app execution pipeline.
+  worktree:
+    meaning: Git worktree created per feature for isolated changes.
+    avoid: Not just a branch name; it is a separate working directory.
+  context files:
+    meaning: Project files and images stored in .automaker/context used by agents.
+    avoid: Not the same as global settings or runtime logs.
+  agent session:
+    meaning: Conversation state and metadata stored in DATA_DIR/agent-sessions.
+    avoid: Not the same as a feature or a worktree.
+  events:
+    meaning: Server-emitted messages streamed over /api/events WebSocket.
+    avoid: Not UI-only events; they originate in the backend event emitter.
+  provider:
+    meaning: LLM integration implementation; currently Claude via providers/claude-provider.ts.
+    avoid: Not a UI theme or model alias.
+  DATA_DIR:
+    meaning: Environment variable for global data (settings, credentials, sessions).
+    avoid: Not the same as a project path or repository root.
+  ALLOWED_ROOT_DIRECTORY:
+    meaning: Environment variable that restricts file operations to a safe root.
+    avoid: Not enforced if unset; DATA_DIR is always allowed.

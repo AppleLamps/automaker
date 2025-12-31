@@ -1,0 +1,25 @@
+hot_spots:
+  - path: apps/server/src/routes/fs/**
+    why: Direct file reads/writes/deletes; must respect path sandboxing
+  - path: libs/platform/src/secure-fs.ts
+    why: Central enforcement of ALLOWED_ROOT_DIRECTORY and DATA_DIR exceptions
+  - path: apps/server/src/routes/terminal/**
+    why: Terminal creation and authentication before WS access
+  - path: apps/server/src/services/terminal-service.ts
+    why: node-pty sessions, IO buffering, and resize throttling
+  - path: apps/server/src/services/agent-service.ts
+    why: Orchestrates provider execution and file access in working directories
+  - path: apps/server/src/routes/auto-mode/**
+    why: Feature execution state machine and approvals
+  - path: apps/server/src/routes/worktree/**
+    why: Git worktree creation and deletion can be destructive
+  - path: libs/git-utils/src/**
+    why: Low-level git operations and diff handling
+  - path: apps/ui/src/main.ts
+    why: Spawns backend server and defines IPC security boundaries
+  - path: init.mjs
+    why: Kills processes on ports and spawns dev processes cross-platform
+  - path: apps/server/src/lib/auth.ts
+    why: Authentication and API key handling for all /api routes
+  - path: apps/server/src/routes/setup/**
+    why: Credential storage and provider setup

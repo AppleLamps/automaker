@@ -1,0 +1,544 @@
+/**
+ * Terminal Service
+ *
+ * Manages PTY (pseudo-terminal) sessions using node-pty.
+ * Supports cross-platform shell detection including WSL.
+ */
+
+import * as pty from 'node-pty';
+import { EventEmitter } from 'events';
+import * as os from 'os';
+import * as fs from 'fs';
+import * as path from 'path';
+
+// Maximum scrollback buffer size (characters)
+const MAX_SCROLLBACK_SIZE = 50000; // ~50KB per terminal
+
+// Session limit constants - shared with routes/settings.ts
+export const MIN_MAX_SESSIONS = 1;
+export const MAX_MAX_SESSIONS = 1000;
+
+// Maximum number of concurrent terminal sessions
+// Can be overridden via TERMINAL_MAX_SESSIONS environment variable
+// Default set to 1000 - effectively unlimited for most use cases
+let maxSessions = parseInt(process.env.TERMINAL_MAX_SESSIONS || '1000', 10);
+
+// Throttle output to prevent overwhelming WebSocket under heavy load
+// Using 4ms for responsive input feedback while still preventing flood
+// Note: 16ms caused perceived input lag, especially with backspace
+const OUTPUT_THROTTLE_MS = 4; // ~250fps max update rate for responsive input
+const OUTPUT_BATCH_SIZE = 4096; // Smaller batches for lower latency
+
+export interface TerminalSession {
+  id: string;
+  pty: pty.IPty;
+  cwd: string;
+  createdAt: Date;
+  shell: string;
+  scrollbackBuffer: string; // Store recent output for replay on reconnect
+  outputBuffer: string; // Pending output to be flushed
+  flushTimeout: NodeJS.Timeout | null; // Throttle timer
+  resizeInProgress: boolean; // Flag to suppress scrollback during resize
+  resizeDebounceTimeout: NodeJS.Timeout | null; // Resize settle timer
+}
+
+export interface TerminalOptions {
+  cwd?: string;
+  shell?: string;
+  cols?: number;
+  rows?: number;
+  env?: Record<string, string>;
+}
+
+type DataCallback = (sessionId: string, data: string) => void;
+type ExitCallback = (sessionId: string, exitCode: number) => void;
+
+export class TerminalService extends EventEmitter {
+  private sessions: Map<string, TerminalSession> = new Map();
+  private dataCallbacks: Set<DataCallback> = new Set();
+  private exitCallbacks: Set<ExitCallback> = new Set();
+
+  /**
+   * Detect the best shell for the current platform
+   */
+  detectShell(): { shell: string; args: string[] } {
+    const platform = os.platform();
+
+    // Check if running in WSL
+    if (platform === 'linux' && this.isWSL()) {
+      // In WSL, prefer the user's configured shell or bash
+      const userShell = process.env.SHELL || '/bin/bash';
+      if (fs.existsSync(userShell)) {
+        return { shell: userShell, args: ['--login'] };
+      }
+      return { shell: '/bin/bash', args: ['--login'] };
+    }
+
+    switch (platform) {
+      case 'win32': {
+        // Windows: prefer PowerShell, fall back to cmd
+        const pwsh = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+        const pwshCore = 'C:\\Program Files\\PowerShell\\7\\pwsh.exe';
+
+        if (fs.existsSync(pwshCore)) {
+          return { shell: pwshCore, args: [] };
+        }
+        if (fs.existsSync(pwsh)) {
+          return { shell: pwsh, args: [] };
+        }
+        return { shell: 'cmd.exe', args: [] };
+      }
+
+      case 'darwin': {
+        // macOS: prefer user's shell, then zsh, then bash
+        const userShell = process.env.SHELL;
+        if (userShell && fs.existsSync(userShell)) {
+          return { shell: userShell, args: ['--login'] };
+        }
+        if (fs.existsSync('/bin/zsh')) {
+          return { shell: '/bin/zsh', args: ['--login'] };
+        }
+        return { shell: '/bin/bash', args: ['--login'] };
+      }
+
+      case 'linux':
+      default: {
+        // Linux: prefer user's shell, then bash, then sh
+        const userShell = process.env.SHELL;
+        if (userShell && fs.existsSync(userShell)) {
+          return { shell: userShell, args: ['--login'] };
+        }
+        if (fs.existsSync('/bin/bash')) {
+          return { shell: '/bin/bash', args: ['--login'] };
+        }
+        return { shell: '/bin/sh', args: [] };
+      }
+    }
+  }
+
+  /**
+   * Detect if running inside WSL (Windows Subsystem for Linux)
+   */
+  isWSL(): boolean {
+    try {
+      // Check /proc/version for Microsoft/WSL indicators
+      if (fs.existsSync('/proc/version')) {
+        const version = fs.readFileSync('/proc/version', 'utf-8').toLowerCase();
+        return version.includes('microsoft') || version.includes('wsl');
+      }
+      // Check for WSL environment variable
+      if (process.env.WSL_DISTRO_NAME || process.env.WSLENV) {
+        return true;
+      }
+    } catch {
+      // Ignore errors
+    }
+    return false;
+  }
+
+  /**
+   * Get platform info for the client
+   */
+  getPlatformInfo(): {
+    platform: string;
+    isWSL: boolean;
+    defaultShell: string;
+    arch: string;
+  } {
+    const { shell } = this.detectShell();
+    return {
+      platform: os.platform(),
+      isWSL: this.isWSL(),
+      defaultShell: shell,
+      arch: os.arch(),
+    };
+  }
+
+  /**
+   * Validate and resolve a working directory path
+   * Includes basic sanitization against null bytes and path normalization
+   */
+  private resolveWorkingDirectory(requestedCwd?: string): string {
+    const homeDir = os.homedir();
+
+    // If no cwd requested, use home
+    if (!requestedCwd) {
+      return homeDir;
+    }
+
+    // Clean up the path
+    let cwd = requestedCwd.trim();
+
+    // Reject paths with null bytes (could bypass path checks)
+    if (cwd.includes('\0')) {
+      console.warn(`[Terminal] Rejecting path with null byte: ${cwd.replace(/\0/g, '\\0')}`);
+      return homeDir;
+    }
+
+    // Fix double slashes at start (but not for Windows UNC paths)
+    if (cwd.startsWith('//') && !cwd.startsWith('//wsl')) {
+      cwd = cwd.slice(1);
+    }
+
+    // Normalize the path to resolve . and .. segments
+    // Skip normalization for WSL UNC paths as path.resolve would break them
+    if (!cwd.startsWith('//wsl')) {
+      cwd = path.resolve(cwd);
+    }
+
+    // Check if path exists and is a directory
+    try {
+      const stat = fs.statSync(cwd);
+      if (stat.isDirectory()) {
+        return cwd;
+      }
+      console.warn(`[Terminal] Path exists but is not a directory: ${cwd}, falling back to home`);
+      return homeDir;
+    } catch {
+      console.warn(`[Terminal] Working directory does not exist: ${cwd}, falling back to home`);
+      return homeDir;
+    }
+  }
+
+  /**
+   * Get current session count
+   */
+  getSessionCount(): number {
+    return this.sessions.size;
+  }
+
+  /**
+   * Get maximum allowed sessions
+   */
+  getMaxSessions(): number {
+    return maxSessions;
+  }
+
+  /**
+   * Set maximum allowed sessions (can be called dynamically)
+   */
+  setMaxSessions(limit: number): void {
+    if (limit >= MIN_MAX_SESSIONS && limit <= MAX_MAX_SESSIONS) {
+      maxSessions = limit;
+      console.log(`[Terminal] Max sessions limit updated to ${limit}`);
+    }
+  }
+
+  /**
+   * Create a new terminal session
+   * Returns null if the maximum session limit has been reached
+   */
+  createSession(options: TerminalOptions = {}): TerminalSession | null {
+    // Check session limit
+    if (this.sessions.size >= maxSessions) {
+      console.error(`[Terminal] Max sessions (${maxSessions}) reached, refusing new session`);
+      return null;
+    }
+
+    const id = `term-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+
+    const { shell: detectedShell, args: shellArgs } = this.detectShell();
+    const shell = options.shell || detectedShell;
+
+    // Validate and resolve working directory
+    const cwd = this.resolveWorkingDirectory(options.cwd);
+
+    // Build environment with some useful defaults
+    // These settings ensure consistent terminal behavior across platforms
+    const env: Record<string, string> = {
+      ...process.env,
+      TERM: 'xterm-256color',
+      COLORTERM: 'truecolor',
+      TERM_PROGRAM: 'automaker-terminal',
+      // Ensure proper locale for character handling
+      LANG: process.env.LANG || 'en_US.UTF-8',
+      LC_ALL: process.env.LC_ALL || process.env.LANG || 'en_US.UTF-8',
+      ...options.env,
+    };
+
+    console.log(`[Terminal] Creating session ${id} with shell: ${shell} in ${cwd}`);
+
+    const ptyProcess = pty.spawn(shell, shellArgs, {
+      name: 'xterm-256color',
+      cols: options.cols || 80,
+      rows: options.rows || 24,
+      cwd,
+      env,
+    });
+
+    const session: TerminalSession = {
+      id,
+      pty: ptyProcess,
+      cwd,
+      createdAt: new Date(),
+      shell,
+      scrollbackBuffer: '',
+      outputBuffer: '',
+      flushTimeout: null,
+      resizeInProgress: false,
+      resizeDebounceTimeout: null,
+    };
+
+    this.sessions.set(id, session);
+
+    // Flush buffered output to clients (throttled)
+    const flushOutput = () => {
+      if (session.outputBuffer.length === 0) return;
+
+      // Send in batches if buffer is large
+      let dataToSend = session.outputBuffer;
+      if (dataToSend.length > OUTPUT_BATCH_SIZE) {
+        dataToSend = session.outputBuffer.slice(0, OUTPUT_BATCH_SIZE);
+        session.outputBuffer = session.outputBuffer.slice(OUTPUT_BATCH_SIZE);
+        // Schedule another flush for remaining data
+        session.flushTimeout = setTimeout(flushOutput, OUTPUT_THROTTLE_MS);
+      } else {
+        session.outputBuffer = '';
+        session.flushTimeout = null;
+      }
+
+      this.dataCallbacks.forEach((cb) => cb(id, dataToSend));
+      this.emit('data', id, dataToSend);
+    };
+
+    // Forward data events with throttling
+    ptyProcess.onData((data) => {
+      // Skip ALL output during resize/reconnect to prevent prompt redraw duplication
+      // This drops both scrollback AND live output during the suppression window
+      // Without this, prompt redraws from SIGWINCH go to live clients causing duplicates
+      if (session.resizeInProgress) {
+        return;
+      }
+
+      // Append to scrollback buffer
+      session.scrollbackBuffer += data;
+      // Trim if too large (keep the most recent data)
+      if (session.scrollbackBuffer.length > MAX_SCROLLBACK_SIZE) {
+        session.scrollbackBuffer = session.scrollbackBuffer.slice(-MAX_SCROLLBACK_SIZE);
+      }
+
+      // Buffer output for throttled live delivery
+      session.outputBuffer += data;
+
+      // Schedule flush if not already scheduled
+      if (!session.flushTimeout) {
+        session.flushTimeout = setTimeout(flushOutput, OUTPUT_THROTTLE_MS);
+      }
+    });
+
+    // Handle exit
+    ptyProcess.onExit(({ exitCode }) => {
+      console.log(`[Terminal] Session ${id} exited with code ${exitCode}`);
+      this.sessions.delete(id);
+      this.exitCallbacks.forEach((cb) => cb(id, exitCode));
+      this.emit('exit', id, exitCode);
+    });
+
+    console.log(`[Terminal] Session ${id} created successfully`);
+    return session;
+  }
+
+  /**
+   * Write data to a terminal session
+   */
+  write(sessionId: string, data: string): boolean {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      console.warn(`[Terminal] Session ${sessionId} not found`);
+      return false;
+    }
+    session.pty.write(data);
+    return true;
+  }
+
+  /**
+   * Resize a terminal session
+   * @param suppressOutput - If true, suppress output during resize to prevent duplicate prompts.
+   *                         Should be false for the initial resize so the first prompt isn't dropped.
+   */
+  resize(sessionId: string, cols: number, rows: number, suppressOutput: boolean = true): boolean {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      console.warn(`[Terminal] Session ${sessionId} not found for resize`);
+      return false;
+    }
+    try {
+      // Only suppress output on subsequent resizes, not the initial one
+      // This prevents the shell's first prompt from being dropped
+      if (suppressOutput) {
+        session.resizeInProgress = true;
+        if (session.resizeDebounceTimeout) {
+          clearTimeout(session.resizeDebounceTimeout);
+        }
+      }
+
+      session.pty.resize(cols, rows);
+
+      // Clear resize flag after a delay (allow prompt to settle)
+      // 150ms is enough for most prompts - longer causes sluggish feel
+      if (suppressOutput) {
+        session.resizeDebounceTimeout = setTimeout(() => {
+          session.resizeInProgress = false;
+          session.resizeDebounceTimeout = null;
+        }, 150);
+      }
+
+      return true;
+    } catch (error) {
+      console.error(`[Terminal] Error resizing session ${sessionId}:`, error);
+      session.resizeInProgress = false; // Clear flag on error
+      return false;
+    }
+  }
+
+  /**
+   * Kill a terminal session
+   * Attempts graceful SIGTERM first, then SIGKILL after 1 second if still alive
+   */
+  killSession(sessionId: string): boolean {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      return false;
+    }
+    try {
+      // Clean up flush timeout
+      if (session.flushTimeout) {
+        clearTimeout(session.flushTimeout);
+        session.flushTimeout = null;
+      }
+      // Clean up resize debounce timeout
+      if (session.resizeDebounceTimeout) {
+        clearTimeout(session.resizeDebounceTimeout);
+        session.resizeDebounceTimeout = null;
+      }
+
+      // First try graceful SIGTERM to allow process cleanup
+      console.log(`[Terminal] Session ${sessionId} sending SIGTERM`);
+      session.pty.kill('SIGTERM');
+
+      // Schedule SIGKILL fallback if process doesn't exit gracefully
+      // The onExit handler will remove session from map when it actually exits
+      setTimeout(() => {
+        if (this.sessions.has(sessionId)) {
+          console.log(`[Terminal] Session ${sessionId} still alive after SIGTERM, sending SIGKILL`);
+          try {
+            session.pty.kill('SIGKILL');
+          } catch {
+            // Process may have already exited
+          }
+          // Force remove from map if still present
+          this.sessions.delete(sessionId);
+        }
+      }, 1000);
+
+      console.log(`[Terminal] Session ${sessionId} kill initiated`);
+      return true;
+    } catch (error) {
+      console.error(`[Terminal] Error killing session ${sessionId}:`, error);
+      // Still try to remove from map even if kill fails
+      this.sessions.delete(sessionId);
+      return false;
+    }
+  }
+
+  /**
+   * Get a session by ID
+   */
+  getSession(sessionId: string): TerminalSession | undefined {
+    return this.sessions.get(sessionId);
+  }
+
+  /**
+   * Get scrollback buffer for a session (for replay on reconnect)
+   */
+  getScrollback(sessionId: string): string | null {
+    const session = this.sessions.get(sessionId);
+    return session?.scrollbackBuffer || null;
+  }
+
+  /**
+   * Get scrollback buffer and clear pending output buffer to prevent duplicates
+   * Call this when establishing a new WebSocket connection
+   * This prevents data that's already in scrollback from being sent again via data callback
+   */
+  getScrollbackAndClearPending(sessionId: string): string | null {
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
+
+    // Clear any pending output that hasn't been flushed yet
+    // This data is already in scrollbackBuffer
+    session.outputBuffer = '';
+    if (session.flushTimeout) {
+      clearTimeout(session.flushTimeout);
+      session.flushTimeout = null;
+    }
+
+    // NOTE: Don't set resizeInProgress here - it causes blank terminals
+    // if the shell hasn't output its prompt yet when WebSocket connects.
+    // The resize() method handles suppression during actual resize events.
+
+    return session.scrollbackBuffer || null;
+  }
+
+  /**
+   * Get all active sessions
+   */
+  getAllSessions(): Array<{
+    id: string;
+    cwd: string;
+    createdAt: Date;
+    shell: string;
+  }> {
+    return Array.from(this.sessions.values()).map((s) => ({
+      id: s.id,
+      cwd: s.cwd,
+      createdAt: s.createdAt,
+      shell: s.shell,
+    }));
+  }
+
+  /**
+   * Subscribe to data events
+   */
+  onData(callback: DataCallback): () => void {
+    this.dataCallbacks.add(callback);
+    return () => this.dataCallbacks.delete(callback);
+  }
+
+  /**
+   * Subscribe to exit events
+   */
+  onExit(callback: ExitCallback): () => void {
+    this.exitCallbacks.add(callback);
+    return () => this.exitCallbacks.delete(callback);
+  }
+
+  /**
+   * Clean up all sessions
+   */
+  cleanup(): void {
+    console.log(`[Terminal] Cleaning up ${this.sessions.size} sessions`);
+    this.sessions.forEach((session, id) => {
+      try {
+        // Clean up flush timeout
+        if (session.flushTimeout) {
+          clearTimeout(session.flushTimeout);
+        }
+        session.pty.kill();
+      } catch {
+        // Ignore errors during cleanup
+      }
+      this.sessions.delete(id);
+    });
+  }
+}
+
+// Singleton instance
+let terminalService: TerminalService | null = null;
+
+export function getTerminalService(): TerminalService {
+  if (!terminalService) {
+    terminalService = new TerminalService();
+  }
+  return terminalService;
+}

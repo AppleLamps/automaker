@@ -1,0 +1,42 @@
+entrypoints:
+  dev-launcher:
+    - path: init.mjs
+      purpose: Interactive launcher that prepares deps, frees ports, and starts UI/server
+  server:
+    - path: apps/server/src/index.ts
+      purpose: Express + WebSocket server boot and route wiring
+    - path: apps/server/src/routes/health/index.ts
+      purpose: /api/health endpoint
+    - path: apps/server/src/routes/agent/index.ts
+      purpose: Agent session start/stop/history endpoints
+    - path: apps/server/src/routes/auto-mode/index.ts
+      purpose: Auto-mode feature execution endpoints
+    - path: apps/server/src/routes/pipeline/index.ts
+      purpose: Pipeline configuration endpoints
+    - path: apps/server/src/routes/backlog-plan/index.ts
+      purpose: Backlog plan generation/apply endpoints
+    - path: apps/server/src/routes/worktree/index.ts
+      purpose: Git worktree operations
+    - path: apps/server/src/routes/fs/index.ts
+      purpose: File read/write/browse endpoints
+    - path: apps/server/src/routes/terminal/index.ts
+      purpose: Terminal session endpoints and auth
+    - path: apps/server/src/routes/context/index.ts
+      purpose: Context file management endpoints
+  websocket:
+    - path: apps/server/src/index.ts
+      purpose: WS upgrade handling for /api/events and /api/terminal/ws
+  electron:
+    - path: apps/ui/src/main.ts
+      purpose: Electron main process, spawns backend and manages IPC
+    - path: apps/ui/src/preload.ts
+      purpose: Exposes window.electronAPI to the renderer
+  ui:
+    - path: apps/ui/src/renderer.tsx
+      purpose: React renderer entrypoint
+    - path: apps/ui/src/app.tsx
+      purpose: App shell and router provider
+    - path: apps/ui/src/utils/router.ts
+      purpose: Router configuration (browser vs memory history)
+    - path: apps/ui/src/lib/http-api-client.ts
+      purpose: Web-mode HTTP/WS client to the server

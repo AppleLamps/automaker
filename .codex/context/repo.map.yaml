@@ -1,0 +1,23 @@
+repo:
+  name: automaker
+  purpose: Orchestrate AI agents to implement software features using a UI, a local HTTP API, and isolated git worktrees.
+interfaces:
+  - Electron desktop app (apps/ui)
+  - Web UI (apps/ui web mode)
+  - HTTP + WebSocket API (apps/server)
+layers:
+  - ui-electron: React/Vite UI, Electron main/preload, HTTP client, E2E tests
+  - server-core: Express API, auth, event streaming, terminal WS
+  - agent-orchestration: AgentService, AutoMode, pipeline/backlog plan, providers, prompts
+  - system-io-storage: file-based data, context files, secure fs, terminal sessions
+  - git-worktrees: worktree creation, git operations, PR/branch helpers
+  - shared-libs: types, platform, utils, model/dependency resolver, prompts, git-utils
+core_responsibilities:
+  - Manage feature lifecycle (create, run, verify, approve, commit)
+  - Run AI agents via Claude Agent SDK with event streaming
+  - Maintain project and global data on disk (no database)
+  - Isolate changes in git worktrees and support review/merge
+non_goals:
+  - Provide a hosted multi-tenant service or SaaS backend
+  - Use a centralized database for core data
+  - Expose a general-purpose IDE beyond the agent workflow

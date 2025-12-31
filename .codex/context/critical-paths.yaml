@@ -1,0 +1,67 @@
+critical_paths:
+  - name: server-startup
+    steps:
+      - file: apps/server/src/index.ts
+        note: Load env, initAllowedPaths, create services, register routes
+      - file: apps/server/src/routes/**/index.ts
+        note: Route modules mounted under /api
+      - file: apps/server/src/index.ts
+        note: HTTP server + WS upgrades for /api/events and /api/terminal/ws
+  - name: electron-startup
+    steps:
+      - file: apps/ui/src/main.ts
+        note: Start backend server, create BrowserWindow, wire IPC
+      - file: apps/ui/src/preload.ts
+        note: Expose minimal electronAPI to renderer
+      - file: apps/ui/src/renderer.tsx
+        note: Render React app and router
+  - name: web-ui-startup
+    steps:
+      - file: apps/ui/src/renderer.tsx
+        note: Render React app
+      - file: apps/ui/src/utils/router.ts
+        note: Choose browser history for web mode
+      - file: apps/ui/src/lib/http-api-client.ts
+        note: Connect to /api/events and call HTTP endpoints
+  - name: auto-mode-feature-run
+    steps:
+      - file: apps/ui/src/lib/http-api-client.ts
+        note: POST /api/auto-mode/run-feature and subscribe to events
+      - file: apps/server/src/routes/auto-mode/routes/run-feature.ts
+        note: Validate inputs and delegate to AutoModeService
+      - file: apps/server/src/services/auto-mode-service.ts
+        note: Coordinate planning, agent execution, and approvals
+      - file: apps/server/src/services/agent-service.ts
+        note: Run provider session and stream events
+      - file: apps/server/src/providers/claude-provider.ts
+        note: Claude Agent SDK integration
+      - file: apps/server/src/lib/events.ts
+        note: Event fan-out to WebSocket clients
+  - name: worktree-create-and-commit
+    steps:
+      - file: apps/ui/src/lib/http-api-client.ts
+        note: Call /api/worktree/create, /api/worktree/commit, /api/worktree/merge
+      - file: apps/server/src/routes/worktree/routes/create.ts
+        note: Validate project path and create worktree
+      - file: libs/git-utils/src/index.ts
+        note: Git operations and diff helpers
+      - file: apps/server/src/lib/worktree-metadata.ts
+        note: Persist worktree metadata
+  - name: terminal-session
+    steps:
+      - file: apps/ui/src/components/views/terminal-view.tsx
+        note: UI creates sessions and connects to terminal WS
+      - file: apps/server/src/routes/terminal/index.ts
+        note: Create session, validate auth settings
+      - file: apps/server/src/index.ts
+        note: Upgrade /api/terminal/ws and validate tokens
+      - file: apps/server/src/services/terminal-service.ts
+        note: node-pty session and IO management
+  - name: filesystem-read-write
+    steps:
+      - file: apps/ui/src/lib/http-api-client.ts
+        note: Call /api/fs/read and /api/fs/write
+      - file: apps/server/src/routes/fs/routes/read.ts
+        note: Validate paths before read
+      - file: libs/platform/src/secure-fs.ts
+        note: Enforce ALLOWED_ROOT_DIRECTORY and DATA_DIR rules

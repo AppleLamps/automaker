@@ -1,0 +1,151 @@
+- path: 'apps/server/src/index.ts'
+  role: authoritative
+  notes: 'Server bootstrap, routing, and WS wiring.'
+
+- path: 'apps/server/src/services/**'
+  role: authoritative
+  notes: 'Backend business logic and orchestration.'
+
+- path: 'apps/server/src/routes/**'
+  role: boundary/contracts
+  notes: 'HTTP API boundary; request/response contracts live here.'
+
+- path: 'apps/server/src/middleware/**'
+  role: boundary/contracts
+  notes: 'Request validation and security boundaries.'
+
+- path: 'apps/ui/src/routes/**'
+  role: boundary/contracts
+  notes: 'UI routing and page-level boundaries.'
+
+- path: 'apps/ui/src/lib/http-api-client.ts'
+  role: boundary/contracts
+  notes: 'Client-side API contract surface.'
+
+- path: 'apps/ui/src/store/**'
+  role: authoritative
+  notes: 'App state ownership and persistence.'
+
+- path: 'apps/ui/src/components/**'
+  role: authoritative
+  notes: 'UI composition and view logic.'
+
+- path: 'apps/ui/src/styles/**'
+  role: authoritative
+  notes: 'Theme and UI styling.'
+
+- path: 'libs/types/src/**/*.ts'
+  role: boundary/contracts
+  notes: 'Shared type contracts; source of truth for data shapes.'
+
+- path: 'libs/*/src/index.ts'
+  role: authoritative
+  notes: 'Public API surface for shared packages.'
+
+- path: 'libs/**/tests/**'
+  role: authoritative
+  notes: 'Behavioral reference for shared packages.'
+
+- path: 'apps/**/tests/**'
+  role: authoritative
+  notes: 'Behavioral reference for app-level changes.'
+
+- path: '**/.automaker/**'
+  role: generated/derived
+  do_not_edit: true
+  notes: 'Runtime data for projects; do not edit by hand.'
+
+- path: 'data/**'
+  role: generated/derived
+  do_not_edit: true
+  notes: 'Runtime data for sessions and settings.'
+
+- path: '**/dist/**'
+  role: generated/derived
+  do_not_edit: true
+  notes: 'Build output.'
+
+- path: 'apps/ui/dist-electron/**'
+  role: generated/derived
+  do_not_edit: true
+  notes: 'Electron build output.'
+
+- path: 'apps/ui/release/**'
+  role: generated/derived
+  do_not_edit: true
+  notes: 'Packaged artifacts.'
+
+- path: 'node_modules/**'
+  role: generated/derived
+  do_not_edit: true
+  notes: 'Installed dependencies.'
+
+- path: 'package-lock.json'
+  role: generated/derived
+  do_not_edit: true
+  notes: 'Managed by npm.'
+
+- path: 'pnpm-lock.yaml'
+  role: generated/derived
+  do_not_edit: true
+  notes: 'Managed by pnpm.'
+
+- path: 'apps/server/src/lib/logger.ts'
+  role: legacy/deprecated
+  do_not_extend: true
+  preferred_replacement: 'libs/utils (createLogger)'
+  notes: 'Prefer shared utilities for new code.'
+
+- path: 'apps/server/src/lib/error-handler.ts'
+  role: legacy/deprecated
+  do_not_extend: true
+  preferred_replacement: 'libs/utils (error helpers)'
+  notes: 'Prefer shared utilities for new code.'
+
+- path: 'apps/server/src/lib/prompt-builder.ts'
+  role: legacy/deprecated
+  do_not_extend: true
+  preferred_replacement: 'libs/utils (prompt helpers)'
+  notes: 'Prefer shared utilities for new code.'
+
+- path: 'apps/server/src/lib/image-handler.ts'
+  role: legacy/deprecated
+  do_not_extend: true
+  preferred_replacement: 'libs/utils (image helpers)'
+  notes: 'Prefer shared utilities for new code.'
+
+- path: 'apps/server/src/lib/fs-utils.ts'
+  role: legacy/deprecated
+  do_not_extend: true
+  preferred_replacement: 'libs/utils (fs helpers)'
+  notes: 'Prefer shared utilities for new code.'
+
+- path: 'apps/server/src/lib/conversation-utils.ts'
+  role: legacy/deprecated
+  do_not_extend: true
+  preferred_replacement: 'libs/utils (conversation helpers)'
+  notes: 'Prefer shared utilities for new code.'
+
+- path: 'apps/server/src/lib/model-resolver.ts'
+  role: legacy/deprecated
+  do_not_extend: true
+  preferred_replacement: 'libs/model-resolver'
+  notes: 'Prefer shared utilities for new code.'
+
+- path: 'apps/server/src/lib/dependency-resolver.ts'
+  role: legacy/deprecated
+  do_not_extend: true
+  preferred_replacement: 'libs/dependency-resolver'
+  notes: 'Prefer shared utilities for new code.'
+
+- path: 'apps/server/src/lib/enhancement-prompts.ts'
+  role: legacy/deprecated
+  do_not_extend: true
+  preferred_replacement: 'libs/prompts'
+  notes: 'Prefer shared prompts for new code.'
+
+- path: 'apps/server/src/services/feature-loader.ts'
+  role: legacy/deprecated
+  do_not_extend: true
+  preferred_replacement: 'libs/types for contracts'
+  notes: 'Do not import types from this file.'
