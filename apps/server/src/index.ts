@@ -128,8 +128,8 @@ const claudeUsageService = new ClaudeUsageService();
   console.log('[Server] Agent service initialized');
 })();
 
-// Run stale validation cleanup every hour to prevent memory leaks from crashed validations
-const VALIDATION_CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+// Run stale validation cleanup every 10 minutes to prevent memory leaks from crashed validations
+const VALIDATION_CLEANUP_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 setInterval(() => {
   const cleaned = cleanupStaleValidations();
   if (cleaned > 0) {

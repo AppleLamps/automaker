@@ -85,6 +85,9 @@ interface EnhancePromptResult {
   error?: string;
 }
 
+/** Maximum WebSocket reconnection attempts before giving up */
+const MAX_RECONNECT_ATTEMPTS = 10;
+
 /**
  * HTTP API Client that implements ElectronAPI interface
  */
@@ -143,12 +146,21 @@ export class HttpApiClient implements ElectronAPI {
         logger.info('WebSocket disconnected');
         this.isConnecting = false;
         this.ws = null;
+
+        // Stop reconnecting after max attempts to prevent infinite loops
+        if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+          logger.error(
+            `WebSocket max reconnect attempts (${MAX_RECONNECT_ATTEMPTS}) reached, stopping reconnection`
+          );
+          return;
+        }
+
         // Attempt to reconnect with exponential backoff
         if (!this.reconnectTimer) {
           const delay = this.getReconnectDelay();
           this.reconnectAttempts += 1;
           logger.info(
-            `Reconnecting WebSocket in ${Math.round(delay)}ms (attempt ${this.reconnectAttempts})`
+            `Reconnecting WebSocket in ${Math.round(delay)}ms (attempt ${this.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`
           );
           this.reconnectTimer = setTimeout(() => {
             this.reconnectTimer = null;
@@ -219,16 +231,29 @@ export class HttpApiClient implements ElectronAPI {
   private async handleResponse<T>(response: Response): Promise<T> {
     if (!response.ok) {
       let errorBody: string | undefined;
+      let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
       try {
         errorBody = await response.text();
+        // Try to extract meaningful error from JSON response
+        if (errorBody) {
+          try {
+            const parsed = JSON.parse(errorBody);
+            if (parsed.error && typeof parsed.error === 'string') {
+              errorMessage = parsed.error;
+            } else if (parsed.message && typeof parsed.message === 'string') {
+              errorMessage = parsed.message;
+            }
+          } catch {
+            // Not JSON, use raw body if it's a reasonable error message
+            if (errorBody.length < 500 && !errorBody.includes('<html')) {
+              errorMessage = errorBody;
+            }
+          }
+        }
       } catch {
         errorBody = undefined;
       }
-      throw new ApiError(
-        `HTTP ${response.status}: ${response.statusText}`,
-        response.status,
-        errorBody
-      );
+      throw new ApiError(errorMessage, response.status, errorBody);
     }
 
     return this.parseJson<T>(response);
