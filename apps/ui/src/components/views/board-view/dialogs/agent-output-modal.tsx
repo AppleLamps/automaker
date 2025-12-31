@@ -27,6 +27,9 @@ interface AgentOutputModalProps {
 
 type ViewMode = 'parsed' | 'raw' | 'changes';
 
+/** Maximum output buffer size (~500KB) to prevent memory exhaustion */
+const MAX_OUTPUT_SIZE = 500000;
+
 export function AgentOutputModal({
   open,
   onClose,
@@ -43,6 +46,7 @@ export function AgentOutputModal({
   const autoScrollRef = useRef(true);
   const projectPathRef = useRef<string>('');
   const useWorktrees = useAppStore((state) => state.useWorktrees);
+  const currentProject = useAppStore((state) => state.currentProject);
 
   // Auto-scroll to bottom when output changes
   useEffect(() => {
@@ -62,8 +66,7 @@ export function AgentOutputModal({
       setIsLoading(true);
 
       try {
-        // Get current project path from store (we'll need to pass this)
-        const currentProject = (window as any).__currentProject;
+        // Get current project path from Zustand store (not fragile window global)
         if (!currentProject?.path) {
           setIsLoading(false);
           return;
@@ -93,7 +96,7 @@ export function AgentOutputModal({
     };
 
     loadOutput();
-  }, [open, featureId]);
+  }, [open, featureId, currentProject?.path]);
 
   // Listen to auto mode events and update output
   useEffect(() => {
@@ -242,7 +245,14 @@ export function AgentOutputModal({
 
       if (newContent) {
         // Only update local state - server is the single source of truth for file writes
-        setOutput((prev) => prev + newContent);
+        setOutput((prev) => {
+          const combined = prev + newContent;
+          // Trim from start if output exceeds max size to prevent memory exhaustion
+          if (combined.length > MAX_OUTPUT_SIZE) {
+            return combined.slice(-MAX_OUTPUT_SIZE);
+          }
+          return combined;
+        });
       }
     });
 

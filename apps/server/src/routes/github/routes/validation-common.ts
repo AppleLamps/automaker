@@ -28,8 +28,11 @@ interface ValidationStatus {
  */
 const validationStatusMap = new Map<string, ValidationStatus>();
 
-/** Maximum age for stale validation entries before cleanup (1 hour) */
-const MAX_VALIDATION_AGE_MS = 60 * 60 * 1000;
+/** Maximum age for stale validation entries before cleanup (10 minutes) */
+const MAX_VALIDATION_AGE_MS = 10 * 60 * 1000;
+
+/** Maximum number of concurrent validations to prevent memory exhaustion */
+const MAX_CONCURRENT_VALIDATIONS = 50;
 
 /**
  * Create a unique key for a validation
@@ -91,6 +94,14 @@ export function setValidationRunning(
   issueNumber: number,
   abortController: AbortController
 ): void {
+  // Safety: Clean up stale entries if approaching memory limits
+  if (validationStatusMap.size >= MAX_CONCURRENT_VALIDATIONS) {
+    logger.warn(
+      `Validation map size (${validationStatusMap.size}) reached limit, running cleanup`
+    );
+    cleanupStaleValidations();
+  }
+
   const key = getValidationKey(projectPath, issueNumber);
   validationStatusMap.set(key, {
     isRunning: true,
